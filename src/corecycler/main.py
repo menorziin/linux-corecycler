@@ -309,7 +309,9 @@ def main() -> int:
 
         print(USAGE)
         return 0
-    if argv and argv[0] in ("doctor", "status", "tune", "resume"):
+    from corecycler.cli import CLI_COMMANDS
+
+    if argv and argv[0] in CLI_COMMANDS:
         from corecycler.cli import cli_main
 
         return cli_main(argv)

@@ -234,6 +234,24 @@ class TestCliMainDispatch:
         assert "core 1: best    -" in out
         db.close()
 
+    @pytest.mark.parametrize("command", cli.CLI_COMMANDS)
+    def test_main_routes_every_cli_command_to_the_cli(self, monkeypatch, command):
+        # A command cli_main handles but main() does not route opens the GUI instead.
+        from corecycler import main as main_mod
+
+        seen = []
+        monkeypatch.setattr(cli, "cli_main", lambda argv: seen.append(argv) or 0)
+        monkeypatch.setattr(main_mod, "setup_logging", lambda: None)
+        monkeypatch.setattr(main_mod.sys, "argv", ["corecycler", command])
+        assert main_mod.main() == 0
+        assert seen == [[command]]
+
+    def test_every_usage_command_is_routed(self):
+        import re
+
+        listed = set(re.findall(r"^  corecycler (\w+)", cli.USAGE, re.MULTILINE))
+        assert listed <= set(cli.CLI_COMMANDS)
+
     def test_pbo_dispatches(self, monkeypatch):
         seen = []
         monkeypatch.setattr(cli, "cmd_pbo", lambda: seen.append("p") or 0)

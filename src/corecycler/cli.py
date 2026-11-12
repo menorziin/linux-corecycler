@@ -23,6 +23,10 @@ EXIT_LOCKED = 7
 EXIT_NOTHING_ACTIVE = 8
 EXIT_SIGNAL = 130
 
+# Every subcommand cli_main handles. main() routes argv[0] here instead of the GUI,
+# so a command missing from this tuple silently opens the window instead.
+CLI_COMMANDS = ("doctor", "status", "pbo", "tune", "resume")
+
 USAGE = """\
 corecycler headless commands:
 
