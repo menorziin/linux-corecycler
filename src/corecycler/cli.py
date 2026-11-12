@@ -151,6 +151,12 @@ def cmd_status(db=None) -> int:
                 f"#{sess.id}  {sess.status:<12} {done}/{len(states)} cores done  "
                 f"created {sess.created_at[:19]}  {sess.cpu_model or ''}"
             )
+            if any(cs.best_offset is not None for cs in states.values()):
+                for core_id in sorted(states):
+                    cs = states[core_id]
+                    best = "-" if cs.best_offset is None else f"{cs.best_offset:+d}"
+                    phase = getattr(cs.phase, "value", cs.phase)
+                    print(f"      core {core_id}: best {best:>4}  ({phase}, crashes {cs.crash_count})")
         return EXIT_COMPLETED
     finally:
         if own_db:

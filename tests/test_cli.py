@@ -220,6 +220,20 @@ class TestCliMainDispatch:
         assert cli.cli_main(["status"]) == 0
         assert seen == ["s"]
 
+    def test_status_lists_per_core_offsets(self, capsys):
+        from corecycler.history.db import HistoryDB
+        from corecycler.tuner.state import CoreState, TunerPhase
+
+        db = HistoryDB(":memory:")
+        sid = tp.create_session(db, TunerConfig(cores_to_test=[0, 1]), "", "")
+        tp.save_core_state(db, sid, CoreState(core_id=0, phase=TunerPhase.CONFIRMED, best_offset=-22))
+        tp.save_core_state(db, sid, CoreState(core_id=1, phase=TunerPhase.COARSE_SEARCH))
+        assert cli.cmd_status(db=db) == cli.EXIT_COMPLETED
+        out = capsys.readouterr().out
+        assert "core 0: best  -22  (confirmed, crashes 0)" in out
+        assert "core 1: best    -" in out
+        db.close()
+
     def test_tune_dispatches_with_no_config(self, monkeypatch):
         seen = {}
         monkeypatch.setattr(cli, "cmd_run", lambda **k: seen.update(k) or 0)
