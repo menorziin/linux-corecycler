@@ -45,7 +45,7 @@ find_device() {
     [ -n "$first" ] && echo "$first"
 }
 
-modprobe sp5100_tco heartbeat="$HEARTBEAT" 2>/dev/null \
+modprobe sp5100_tco heartbeat="$HEARTBEAT" nowayout=0 2>/dev/null \
     || log "aviso: modprobe sp5100_tco falhou (a BIOS pode ter desativado o TCO)"
 
 dev=""
@@ -56,6 +56,14 @@ for _ in $(seq 20); do
 done
 if [ -z "$dev" ] || [ ! -c "$dev" ]; then
     log "nenhum dispositivo de watchdog encontrado -- travamentos NÃO vão reiniciar sozinhos"
+    exit 1
+fi
+
+# Com nowayout=1 o "magic close" é ignorado: desarmar faria o PC reiniciar
+# sozinho em ~timeout segundos. Nunca abra um watchdog assim.
+if [ "$(cat "/sys/class/watchdog/$(basename "$dev")/nowayout" 2>/dev/null)" = 1 ]; then
+    log "$dev está com nowayout=1 (não dá para desarmar com segurança); não vou usá-lo"
+    log "recarregue o módulo: sudo modprobe -r sp5100_tco && sudo modprobe sp5100_tco nowayout=0"
     exit 1
 fi
 

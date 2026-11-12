@@ -62,7 +62,7 @@ systemctl daemon-reload
 
 echo
 echo "Pronto. Fluxo:"
-echo "  1. sudo corecycler                 -> configure e inicie o Auto-Tuner na GUI"
-echo "  2. sudo corecycler-autotune arm    -> a partir daqui crashes são retomados sozinhos"
+echo "  1. sudo corecycler                 -> configure e inicie o Auto-Tuner na GUI, depois feche"
+echo "  2. sudo corecycler-autotune resume -> o serviço continua; crashes e reboots são retomados"
 echo "     (ou tudo sem GUI: sudo corecycler-autotune start)"
 echo "  corecycler-autotune status | log   -> acompanhar"

@@ -245,11 +245,24 @@ class TestCliMainDispatch:
         assert seen["resume_id"] is None and seen["auto_resume"] is True
         assert seen["active_only"] is False
 
+    def test_resume_by_id_keep_on_signal_dispatches(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(cli, "cmd_run", lambda **k: seen.update(k) or 0)
+        cli.cli_main(["resume", "4", "--keep-on-signal"])
+        assert seen["resume_id"] == 4 and seen["keep_on_signal"] is True
+
+    def test_resume_by_id_default_does_not_keep_on_signal(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(cli, "cmd_run", lambda **k: seen.update(k) or 0)
+        cli.cli_main(["resume", "4"])
+        assert seen["keep_on_signal"] is False
+
     def test_resume_active_only_dispatches(self, monkeypatch):
         seen = {}
         monkeypatch.setattr(cli, "cmd_run", lambda **k: seen.update(k) or 0)
         cli.cli_main(["resume", "--active-only"])
         assert seen["auto_resume"] is True and seen["active_only"] is True
+        assert seen["keep_on_signal"] is True
 
 
 class TestBuildSmu:
@@ -357,6 +370,48 @@ class TestRunStatusAndSignal:
         code = cli.cmd_run(None, None, False, engine_factory=factory, db=db)
         assert code == cli.EXIT_SIGNAL
         assert made[0].status == "idle"
+
+    def _signal_during_active_only(self, db, monkeypatch, start_status, abort_status):
+        import signal as signal_mod
+
+        sid = tp.create_session(db, TunerConfig(cores_to_test=[0]), "", "")
+        tp.update_session_status(db, sid, start_status)
+        captured: dict = {}
+        real = signal_mod.signal
+
+        def fake_signal(sig, handler):
+            captured[sig] = handler
+            return real(sig, handler)
+
+        monkeypatch.setattr(signal_mod, "signal", fake_signal)
+
+        class AbortingEngine(FakeEngine):
+            session_id = sid
+
+            def abort(self) -> None:  # mirrors TunerEngine.abort's persistence
+                super().abort()
+                tp.update_session_status(db, sid, abort_status)
+
+        def factory(_db, _config):
+            eng = AbortingEngine("runs")
+            QTimer.singleShot(10, lambda: captured[signal_mod.SIGTERM](signal_mod.SIGTERM, None))
+            return eng
+
+        code = cli.cmd_run(None, None, True, active_only=True, engine_factory=factory, db=db)
+        return code, tp.get_session(db, sid).status
+
+    def test_active_only_signal_keeps_session_mid_run(self, db, monkeypatch):
+        code, status = self._signal_during_active_only(db, monkeypatch, "running", "aborted")
+        assert code == cli.EXIT_SIGNAL
+        assert status == "running"
+
+    def test_active_only_signal_keeps_validating(self, db, monkeypatch):
+        _, status = self._signal_during_active_only(db, monkeypatch, "validating", "aborted")
+        assert status == "validating"
+
+    def test_active_only_signal_never_undoes_quarantine(self, db, monkeypatch):
+        _, status = self._signal_during_active_only(db, monkeypatch, "running", "quarantined")
+        assert status == "quarantined"
 
     def test_auto_resume_falls_back_to_first_resumable(self, db):
         sid = tp.create_session(db, TunerConfig(cores_to_test=[0]), "", "")

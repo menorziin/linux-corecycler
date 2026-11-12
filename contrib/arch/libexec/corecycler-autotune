@@ -12,7 +12,11 @@ uso: sudo corecycler-autotune <comando>
 
   start [--config F]   arma o modo automático e inicia uma sessão NOVA de tuning
                        no terminal (sem interface); crashes são retomados sozinhos
-  arm                  arma o modo automático para uma sessão já iniciada na GUI
+  resume [ID]          arma e retoma AGORA, no serviço, a sessão ID (padrão: a
+                       mais recente) -- inclusive uma pausada ou abortada ao
+                       fechar a GUI. A partir daí crashes E reboots normais
+                       são retomados sozinhos
+  arm                  só arma: retoma após crash uma sessão que já está rodando
   disarm               desliga o modo automático e o watchdog
   status               mostra se está armado, o watchdog e as sessões
   log                  acompanha o log do serviço (Ctrl+C para sair)
@@ -72,13 +76,37 @@ ENV
 cmd_disarm() {
     local quiet="${1:-}"
     systemctl disable "${UNITS[@]}" >/dev/null 2>&1
-    systemctl stop corecycler-watchdog.service 2>/dev/null
     if [ -z "${CORECYCLER_IN_SERVICE:-}" ]; then
-        # 'stop' manda SIGTERM: o CLI reverte os offsets para o baseline e salva o estado.
+        # Primeiro o tuner: 'stop' manda SIGTERM, o CLI reverte os offsets para o
+        # baseline e salva o estado. Só então o watchdog sai (nunca o contrário).
         systemctl stop corecycler-autoresume.service 2>/dev/null
     fi
+    systemctl stop corecycler-watchdog.service 2>/dev/null
     rm -f "$ENV_FILE"
     [ "$quiet" = --quiet ] || echo "modo automático DESARMADO"
+}
+
+cmd_resume() {
+    local id="${1:-}"
+    if [ -n "$id" ] && ! [[ "$id" =~ ^[0-9]+$ ]]; then
+        echo "ID inválido: $id" >&2
+        exit 1
+    fi
+    if [ -z "$id" ]; then
+        id=$(/usr/local/bin/corecycler status 2>/dev/null | sed -n 's/^#\([0-9][0-9]*\) .*/\1/p' | head -n1)
+    fi
+    if [ -z "$id" ]; then
+        echo "nenhuma sessão encontrada; inicie uma na GUI ou use: sudo corecycler-autotune start" >&2
+        exit 1
+    fi
+    if systemctl is-active -q corecycler-autoresume.service; then
+        echo "o serviço já está rodando uma sessão; veja: corecycler-autotune log" >&2
+        exit 1
+    fi
+    cmd_arm
+    echo "$id" > /var/lib/corecycler/next-session
+    systemctl start --no-block corecycler-autoresume.service
+    echo "retomando a sessão #$id no serviço (feche a GUI antes); acompanhe com: corecycler-autotune log"
 }
 
 cmd_status() {
@@ -101,6 +129,7 @@ cmd=${1:-}
 [ $# -gt 0 ] && shift
 case "$cmd" in
     arm)    need_root arm; cmd_arm ;;
+    resume) need_root resume; cmd_resume "${1:-}" ;;
     disarm) need_root disarm; cmd_disarm "${1:-}" ;;
     start)
         need_root start

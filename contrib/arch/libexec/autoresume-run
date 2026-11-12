@@ -27,19 +27,31 @@ disarm() {
 }
 
 mkdir -p /var/lib/corecycler
-count=$(cat "$COUNTER" 2>/dev/null || echo 0)
-count=$((count + 1))
-echo "$count" > "$COUNTER"
-if [ "$count" -gt "$MAX_RESUMES" ]; then
-    disarm "limite de $MAX_RESUMES retomadas atingido -- possível loop de crash; confira o log"
-    exit 0
+NEXT=/var/lib/corecycler/next-session
+
+if [ -s "$NEXT" ]; then
+    # Pedido manual (corecycler-autotune resume): retoma essa sessão agora,
+    # mesmo pausada/abortada, sem esperar nem contar como boot.
+    id=$(cat "$NEXT")
+    rm -f "$NEXT"
+    log "retomando a sessão #$id (pedido manual)"
+    CORECYCLER_IN_SERVICE=1 /usr/local/bin/corecycler resume "$id" --keep-on-signal
+    code=$?
+else
+    count=$(cat "$COUNTER" 2>/dev/null || echo 0)
+    count=$((count + 1))
+    echo "$count" > "$COUNTER"
+    if [ "$count" -gt "$MAX_RESUMES" ]; then
+        disarm "limite de $MAX_RESUMES retomadas atingido -- possível loop de crash; confira o log"
+        exit 0
+    fi
+
+    log "boot armado #$count; aguardando ${SETTLE}s para o sistema assentar"
+    sleep "$SETTLE"
+
+    CORECYCLER_IN_SERVICE=1 /usr/local/bin/corecycler resume --active-only
+    code=$?
 fi
-
-log "boot armado #$count; aguardando ${SETTLE}s para o sistema assentar"
-sleep "$SETTLE"
-
-CORECYCLER_IN_SERVICE=1 /usr/local/bin/corecycler resume --active-only
-code=$?
 
 case "$code" in
     0)   disarm "tuning concluído -- veja os valores na aba History e passe-os para a BIOS" ;;

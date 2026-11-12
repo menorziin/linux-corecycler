@@ -8,6 +8,9 @@ Conflicts=shutdown.target
 Before=shutdown.target
 # Escape: adicione corecycler.noresume na linha de comando do kernel
 ConditionKernelCommandLine=!corecycler.noresume
+# Sem dispositivo o script sai com erro: não fique tentando para sempre.
+StartLimitIntervalSec=120
+StartLimitBurst=3
 
 [Service]
 Type=simple

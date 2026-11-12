@@ -32,6 +32,10 @@ corecycler headless commands:
   corecycler resume [SESSION_ID]  resume a mid-run/paused session (newest if omitted)
   corecycler resume --active-only resume ONLY a mid-run (running/validating)
                                   session; never a paused one (boot service path)
+  corecycler resume ... --keep-on-signal
+                                  a SIGTERM/SIGINT still reverts offsets but leaves
+                                  the session mid-run, so the next boot resumes it
+                                  (implied by --active-only)
 
 Exit codes: 0 completed, 3 paused (needs attention), 4 quarantined,
 5 refused (bad config/environment), 6 engine aborted, 7 already running,
@@ -57,11 +61,12 @@ def cli_main(argv: list[str]) -> int:
     if command == "resume":
         flags = [a for a in argv[1:] if a.startswith("-")]
         rest = [a for a in argv[1:] if not a.startswith("-")]
-        unknown = [f for f in flags if f != "--active-only"]
+        unknown = [f for f in flags if f not in ("--active-only", "--keep-on-signal")]
         if unknown:
             print(f"corecycler resume: unknown option {unknown[0]!r}", file=sys.stderr)
             return EXIT_REFUSED
         active_only = "--active-only" in flags
+        keep_on_signal = active_only or "--keep-on-signal" in flags
         if active_only and rest:
             print("corecycler resume: --active-only takes no SESSION_ID", file=sys.stderr)
             return EXIT_REFUSED
@@ -74,8 +79,14 @@ def cli_main(argv: list[str]) -> int:
             except ValueError:
                 print(f"corecycler resume: invalid session id {rest[0]!r}", file=sys.stderr)
                 return EXIT_REFUSED
-            return cmd_run(config_path=None, resume_id=session_id, auto_resume=False)
-        return cmd_run(config_path=None, resume_id=None, auto_resume=True, active_only=active_only)
+            return cmd_run(config_path=None, resume_id=session_id, auto_resume=False, keep_on_signal=keep_on_signal)
+        return cmd_run(
+            config_path=None,
+            resume_id=None,
+            auto_resume=True,
+            active_only=active_only,
+            keep_on_signal=keep_on_signal,
+        )
     print(USAGE, file=sys.stderr)
     return EXIT_REFUSED
 
@@ -168,6 +179,7 @@ def cmd_run(
     auto_resume: bool,
     *,
     active_only: bool = False,
+    keep_on_signal: bool = False,
     engine_factory=None,
     db=None,
 ) -> int:
@@ -269,7 +281,21 @@ def cmd_run(
     def on_signal(signum, _frame) -> None:
         print(f"corecycler: signal {signum} — aborting (offsets revert)", flush=True)
         outcome["exit"] = EXIT_SIGNAL
+        # Boot-service path: a stop from systemd (reboot/shutdown) is not a
+        # verdict on the session. abort() reverts offsets, clears in_test (so
+        # no core is blamed) and marks the session "aborted"; put the mid-run
+        # status back so the next boot's --active-only resumes it.
+        session_id = getattr(engine, "session_id", None) if (keep_on_signal or active_only) else None
+        prior = None
+        if session_id is not None:
+            session = tp.get_session(db, session_id)
+            prior = session.status if session is not None else None
         engine.abort()
+        if prior in ("running", "validating"):
+            after = tp.get_session(db, session_id)
+            if after is not None and after.status == "aborted":
+                tp.update_session_status(db, session_id, prior)
+                print(f"corecycler: session {session_id} kept {prior} for the next boot", flush=True)
         app.quit()
 
     signal.signal(signal.SIGINT, on_signal)
