@@ -752,6 +752,23 @@ class TestReadPowerLimits:
         smu_dir = self._tree(tmp_path, 0x00620205, self._floats())
         assert read_power_limits(16, smu_dir) == (225.0, 190.0, 230.0)
 
+    def test_reads_zen3_vermeer_limits(self, tmp_path):
+        from corecycler.smu.pmtable import read_power_limits
+
+        # Header captured from a 5700X (table 0x380905) at PPT 110 / TDC 70 / EDC 110.
+        floats = [0.0] * 600
+        floats[:16] = [110.0, 22.7, 70.0, 0.6, 95.0, 32.4, 1643.6, 0.0, 110.0, 65.4, 1.5, 0.9, 3.0, 22.7, 0.0, 0.7]
+        smu_dir = self._tree(tmp_path, 0x00380905, floats)
+        assert read_power_limits(8, smu_dir) == (110.0, 70.0, 110.0)
+
+    def test_zen3_layout_not_applied_to_other_generations(self, tmp_path):
+        from corecycler.smu.pmtable import read_power_limits
+
+        floats = [0.0] * 600
+        floats[0], floats[2], floats[8] = 110.0, 70.0, 110.0
+        smu_dir = self._tree(tmp_path, 0x00400005, floats)
+        assert read_power_limits(8, smu_dir) == (None, None, None)
+
     def test_unknown_generation_fails_closed(self, tmp_path):
         from corecycler.smu.pmtable import read_power_limits
 

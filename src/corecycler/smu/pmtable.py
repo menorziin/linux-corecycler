@@ -124,6 +124,8 @@ PM_TABLE_OFFSETS: dict[int, PMTableOffsets] = {
 
 # Zen 5 version prefix for fallback matching (0x62xxxx family).
 _ZEN5_PREFIX = 0x62
+# Zen 3 desktop (Vermeer, 5000 series): 0x3808xx / 0x3809xx tables.
+_ZEN3_VERMEER_PREFIX = 0x38
 
 # Generic Zen 5 offsets used when exact version is not in PM_TABLE_OFFSETS
 # but the version prefix matches Zen 5. A family guess, so verified=False.
@@ -355,8 +357,24 @@ class PMTableReader:
 
         # Always parse legacy core-level data (per-core freq/voltage/temp/power)
         self._parse_granite_ridge(data, floats)
+        self._parse_vermeer_limits(data, floats)
 
         return data
+
+    @staticmethod
+    def _parse_vermeer_limits(data: PMTableData, floats: list[float]) -> None:
+        """PBO limits from the Zen 3 (Vermeer) PM table header.
+
+        Verified on real silicon: a Ryzen 7 5700X (table 0x380905) with BIOS
+        limits PPT 110 W / TDC 70 A / EDC 110 A read [0]=110, [2]=70, [8]=110
+        (next to [4]=95, the thermal limit). Only the three limits are taken;
+        the neighbouring live values are not mapped with the same confidence.
+        """
+        if (data.pm_table_version >> 16) & 0xFF != _ZEN3_VERMEER_PREFIX or len(floats) < 9:
+            return
+        data.ppt_limit_w = floats[0]
+        data.tdc_limit_a = floats[2]
+        data.edc_limit_a = floats[8]
 
     def _read_pm_table_version(self) -> int | None:
         """Read PM table version from sysfs as uint32.
