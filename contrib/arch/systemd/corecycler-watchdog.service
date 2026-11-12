@@ -1,0 +1,22 @@
+[Unit]
+Description=CoreCycler: watchdog de hardware enquanto o tuning do Curve Optimizer está armado
+Documentation=file:///opt/corecycler/contrib/arch/README.md
+DefaultDependencies=no
+After=systemd-modules-load.service local-fs.target
+Before=corecycler-autoresume.service
+Conflicts=shutdown.target
+Before=shutdown.target
+# Escape: adicione corecycler.noresume na linha de comando do kernel
+ConditionKernelCommandLine=!corecycler.noresume
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/corecycler/watchdog-run
+# SIGTERM -> o script escreve o "magic close" (V) e desarma o watchdog
+KillSignal=SIGTERM
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=sysinit.target

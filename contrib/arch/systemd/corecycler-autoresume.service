@@ -1,0 +1,22 @@
+[Unit]
+Description=CoreCycler: retomar o tuning do Curve Optimizer após crash/reboot
+Documentation=file:///opt/corecycler/contrib/arch/README.md
+After=multi-user.target systemd-modules-load.service corecycler-watchdog.service
+Wants=corecycler-watchdog.service
+ConditionPathExists=/etc/corecycler/autotune.env
+# Escape: adicione corecycler.noresume na linha de comando do kernel
+ConditionKernelCommandLine=!corecycler.noresume
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/corecycler/autotune.env
+ExecStart=/usr/local/lib/corecycler/autoresume-run
+# 3 pausado, 4 quarentena, 7 GUI aberta, 8 nada para retomar, 130 sinal: não são falhas
+SuccessExitStatus=3 4 7 8 130
+# o CLI reverte os offsets para o baseline ao receber SIGTERM
+KillSignal=SIGTERM
+TimeoutStopSec=60
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

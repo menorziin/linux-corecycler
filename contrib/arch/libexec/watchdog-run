@@ -1,0 +1,86 @@
+#!/bin/bash
+# Mantém o watchdog de hardware da AMD (sp5100_tco) vivo enquanto o tuning
+# está armado. Se o PC congelar (undervolt instável), ninguém mais escreve no
+# watchdog e a placa reinicia sozinha em ~heartbeat segundos.
+#
+# O CachyOS coloca sp5100_tco na blacklist (e usa nowatchdog); a blacklist só
+# impede o carregamento automático por alias, o modprobe pelo nome funciona.
+set -u
+
+HEARTBEAT="${CORECYCLER_WD_HEARTBEAT:-30}"
+PREV=/run/corecycler/sysctl.prev
+
+log() { echo "corecycler-watchdog: $*"; }
+
+save_and_set_sysctls() {
+    # Kernel panic / oops também precisam terminar em reboot, não em tela parada.
+    mkdir -p /run/corecycler
+    if [ ! -f "$PREV" ]; then
+        for k in kernel.panic kernel.panic_on_oops kernel.softlockup_panic; do
+            v=$(sysctl -n "$k" 2>/dev/null) && echo "$k=$v"
+        done > "$PREV"
+    fi
+    sysctl -q -w kernel.panic=10 kernel.panic_on_oops=1 kernel.softlockup_panic=1 2>/dev/null || true
+}
+
+restore_sysctls() {
+    [ -f "$PREV" ] || return 0
+    while IFS= read -r line; do
+        [ -n "$line" ] && sysctl -q -w "$line" 2>/dev/null
+    done < "$PREV"
+    rm -f "$PREV"
+}
+
+find_device() {
+    # Prefere o watchdog da AMD; cai para o primeiro disponível.
+    local d first=""
+    for d in /sys/class/watchdog/watchdog*; do
+        [ -e "$d" ] || continue
+        [ -z "$first" ] && first="/dev/$(basename "$d")"
+        if grep -qi "sp5100\|tco" "$d/identity" 2>/dev/null; then
+            echo "/dev/$(basename "$d")"
+            return 0
+        fi
+    done
+    [ -n "$first" ] && echo "$first"
+}
+
+modprobe sp5100_tco heartbeat="$HEARTBEAT" 2>/dev/null \
+    || log "aviso: modprobe sp5100_tco falhou (a BIOS pode ter desativado o TCO)"
+
+dev=""
+for _ in $(seq 20); do
+    dev=$(find_device)
+    [ -n "$dev" ] && [ -c "$dev" ] && break
+    sleep 0.5
+done
+if [ -z "$dev" ] || [ ! -c "$dev" ]; then
+    log "nenhum dispositivo de watchdog encontrado -- travamentos NÃO vão reiniciar sozinhos"
+    exit 1
+fi
+
+if ! exec 3>"$dev"; then
+    log "não consegui abrir $dev (outro processo, ex. o systemd com RuntimeWatchdogSec, já o usa?)"
+    exit 1
+fi
+
+identity=$(cat "/sys/class/watchdog/$(basename "$dev")/identity" 2>/dev/null || echo "?")
+timeout=$(cat "/sys/class/watchdog/$(basename "$dev")/timeout" 2>/dev/null || echo "?")
+save_and_set_sysctls
+log "armado em $dev ($identity), timeout ${timeout}s; kernel.panic=10"
+
+disarm() {
+    # Magic close: sem o 'V' o watchdog continuaria contando e reiniciaria o PC.
+    printf 'V' >&3 2>/dev/null
+    exec 3>&-
+    restore_sysctls
+    log "desarmado"
+    exit 0
+}
+trap disarm TERM INT HUP
+
+while :; do
+    printf '\0' >&3 || { log "falha ao escrever em $dev"; exit 1; }
+    sleep 5 &
+    wait $!
+done

@@ -1,0 +1,54 @@
+#!/bin/bash
+# Roda a cada boot enquanto o tuning está armado: espera o sistema assentar e
+# retoma a sessão que estava em andamento (running/validating). Uma sessão
+# pausada pelo usuário nunca é retomada. Quando a sessão termina (ou não há
+# nada para retomar) o modo automático se desarma sozinho.
+set -u
+
+SETTLE="${CORECYCLER_SETTLE:-60}"
+MAX_RESUMES="${CORECYCLER_MAX_RESUMES:-60}"
+COUNTER=/var/lib/corecycler/resume-count
+
+log() { echo "corecycler-autoresume: $*"; }
+
+notify_user() {
+    # Melhor esforço: notificação no desktop do usuário (login automático).
+    local uid="${SUDO_UID:-}" user="${SUDO_USER:-}"
+    [ -n "$uid" ] && [ -n "$user" ] && [ -S "/run/user/$uid/bus" ] || return 0
+    command -v notify-send >/dev/null || return 0
+    runuser -u "$user" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" \
+        notify-send -a CoreCycler "CoreCycler" "$1" 2>/dev/null || true
+}
+
+disarm() {
+    log "desarmando o modo automático ($1)"
+    CORECYCLER_IN_SERVICE=1 /usr/local/bin/corecycler-autotune disarm --quiet || true
+    notify_user "$1"
+}
+
+mkdir -p /var/lib/corecycler
+count=$(cat "$COUNTER" 2>/dev/null || echo 0)
+count=$((count + 1))
+echo "$count" > "$COUNTER"
+if [ "$count" -gt "$MAX_RESUMES" ]; then
+    disarm "limite de $MAX_RESUMES retomadas atingido -- possível loop de crash; confira o log"
+    exit 0
+fi
+
+log "boot armado #$count; aguardando ${SETTLE}s para o sistema assentar"
+sleep "$SETTLE"
+
+CORECYCLER_IN_SERVICE=1 /usr/local/bin/corecycler resume --active-only
+code=$?
+
+case "$code" in
+    0)   disarm "tuning concluído -- veja os valores na aba History e passe-os para a BIOS" ;;
+    3)   disarm "tuning pausado e precisa de atenção -- abra o CoreCycler" ;;
+    4)   disarm "sessão em quarentena: perfil inseguro, núcleos voltaram ao stock" ;;
+    6)   disarm "o tuner abortou sozinho -- confira o log" ;;
+    8)   disarm "nenhuma sessão em andamento para retomar" ;;
+    7)   log "outra instância (GUI?) já está rodando; mantendo armado" ;;
+    130) log "interrompido por sinal (desligamento?); mantendo armado" ;;
+    *)   log "saída $code (ambiente/ryzen_smu?); mantendo armado para o próximo boot" ;;
+esac
+exit "$code"

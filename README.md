@@ -12,6 +12,8 @@ Per-core CPU stability testing and AMD PBO Curve Optimizer tuning for Linux -- a
 
 > **Status:** actively developed and tested on an **AMD Ryzen 9 9950X3D** (Zen 5, dual-CCD X3D, AM5). Other AMD Ryzen processors (Zen 2-5) should work but are less thoroughly tested; Intel CPUs are supported for stress testing only (no Curve Optimizer). Found a problem on other hardware? [Open an issue](https://github.com/Daaboulex/linux-corecycler/issues) with your CPU model.
 
+> **Fork (menorziin):** adds an unattended, crash-surviving tuning mode for CachyOS/Arch -- a boot-time systemd resume service, an armed-only hardware watchdog (`sp5100_tco`) and `corecycler resume --active-only`. See [`contrib/arch/README.md`](contrib/arch/README.md) (pt-BR).
+
 <!-- BEGIN generated:upstream -->
 ## Project
 

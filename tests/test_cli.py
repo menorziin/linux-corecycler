@@ -96,6 +96,12 @@ class TestArgHandling:
     def test_resume_rejects_multiple_ids(self):
         assert cli.cli_main(["resume", "1", "2"]) == cli.EXIT_REFUSED
 
+    def test_resume_rejects_unknown_option(self):
+        assert cli.cli_main(["resume", "--bogus"]) == cli.EXIT_REFUSED
+
+    def test_resume_active_only_rejects_session_id(self):
+        assert cli.cli_main(["resume", "--active-only", "3"]) == cli.EXIT_REFUSED
+
 
 class TestStatus:
     def test_empty_db(self, db, capsys):
@@ -237,6 +243,13 @@ class TestCliMainDispatch:
         monkeypatch.setattr(cli, "cmd_run", lambda **k: seen.update(k) or 0)
         cli.cli_main(["resume"])
         assert seen["resume_id"] is None and seen["auto_resume"] is True
+        assert seen["active_only"] is False
+
+    def test_resume_active_only_dispatches(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(cli, "cmd_run", lambda **k: seen.update(k) or 0)
+        cli.cli_main(["resume", "--active-only"])
+        assert seen["auto_resume"] is True and seen["active_only"] is True
 
 
 class TestBuildSmu:
@@ -356,6 +369,34 @@ class TestRunStatusAndSignal:
             return eng
 
         code = cli.cmd_run(None, None, True, engine_factory=factory, db=db)
+        assert code == cli.EXIT_COMPLETED
+        assert made[0].resumed_with == sid
+
+    def test_active_only_never_resumes_a_paused_session(self, db):
+        sid = tp.create_session(db, TunerConfig(cores_to_test=[0]), "", "")
+        tp.update_session_status(db, sid, "paused")
+        made = []
+
+        def factory(_db, _config):
+            eng = FakeEngine("completes")
+            made.append(eng)
+            return eng
+
+        code = cli.cmd_run(None, None, True, active_only=True, engine_factory=factory, db=db)
+        assert code == cli.EXIT_NOTHING_ACTIVE
+        assert made == []
+
+    def test_active_only_resumes_a_mid_run_session(self, db):
+        sid = tp.create_session(db, TunerConfig(cores_to_test=[0]), "", "")
+        tp.update_session_status(db, sid, "running")
+        made = []
+
+        def factory(_db, _config):
+            eng = FakeEngine("completes")
+            made.append(eng)
+            return eng
+
+        code = cli.cmd_run(None, None, True, active_only=True, engine_factory=factory, db=db)
         assert code == cli.EXIT_COMPLETED
         assert made[0].resumed_with == sid
 

@@ -20,6 +20,7 @@ EXIT_QUARANTINED = 4
 EXIT_REFUSED = 5
 EXIT_ENGINE_ABORTED = 6
 EXIT_LOCKED = 7
+EXIT_NOTHING_ACTIVE = 8
 EXIT_SIGNAL = 130
 
 USAGE = """\
@@ -29,9 +30,12 @@ corecycler headless commands:
   corecycler status               list tuner sessions and their state
   corecycler tune [--config F]    start a NEW tuning session and run to the end
   corecycler resume [SESSION_ID]  resume a mid-run/paused session (newest if omitted)
+  corecycler resume --active-only resume ONLY a mid-run (running/validating)
+                                  session; never a paused one (boot service path)
 
 Exit codes: 0 completed, 3 paused (needs attention), 4 quarantined,
 5 refused (bad config/environment), 6 engine aborted, 7 already running,
+8 nothing mid-run to resume (--active-only),
 130 stopped by signal (offsets reverted to baseline).
 
 Running the binary with no command opens the GUI.
@@ -51,7 +55,16 @@ def cli_main(argv: list[str]) -> int:
             return EXIT_REFUSED
         return cmd_run(config_path=config_path, resume_id=None, auto_resume=False)
     if command == "resume":
+        flags = [a for a in argv[1:] if a.startswith("-")]
         rest = [a for a in argv[1:] if not a.startswith("-")]
+        unknown = [f for f in flags if f != "--active-only"]
+        if unknown:
+            print(f"corecycler resume: unknown option {unknown[0]!r}", file=sys.stderr)
+            return EXIT_REFUSED
+        active_only = "--active-only" in flags
+        if active_only and rest:
+            print("corecycler resume: --active-only takes no SESSION_ID", file=sys.stderr)
+            return EXIT_REFUSED
         if len(rest) > 1:
             print("corecycler resume: at most one SESSION_ID", file=sys.stderr)
             return EXIT_REFUSED
@@ -62,7 +75,7 @@ def cli_main(argv: list[str]) -> int:
                 print(f"corecycler resume: invalid session id {rest[0]!r}", file=sys.stderr)
                 return EXIT_REFUSED
             return cmd_run(config_path=None, resume_id=session_id, auto_resume=False)
-        return cmd_run(config_path=None, resume_id=None, auto_resume=True)
+        return cmd_run(config_path=None, resume_id=None, auto_resume=True, active_only=active_only)
     print(USAGE, file=sys.stderr)
     return EXIT_REFUSED
 
@@ -154,6 +167,7 @@ def cmd_run(
     resume_id: int | None,
     auto_resume: bool,
     *,
+    active_only: bool = False,
     engine_factory=None,
     db=None,
 ) -> int:
@@ -193,6 +207,11 @@ def cmd_run(
     tools.load_configured_paths()
     if db is None:
         db = HistoryDB()
+    if active_only and tp.pick_auto_resume_session(db) is None:
+        # Boot-service path: a paused session is a deliberate human choice and
+        # quarantined/completed ones never qualify -- nothing to do is not an error.
+        print("corecycler: no mid-run session to resume", flush=True)
+        return EXIT_NOTHING_ACTIVE
     if engine_factory is not None:
         engine = engine_factory(db, config)
     else:
@@ -260,6 +279,8 @@ def cmd_run(
         engine.resume(resume_id)
     elif auto_resume:
         session = tp.pick_auto_resume_session(db)
+        if session is None and active_only:
+            return EXIT_NOTHING_ACTIVE
         if session is None:
             sessions = db.list_resumable_tuner_sessions()
             if not sessions:

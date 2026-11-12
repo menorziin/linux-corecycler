@@ -1,0 +1,115 @@
+#!/bin/bash
+# corecycler-autotune -- liga/desliga o tuning automático que sobrevive a crashes.
+set -u
+
+ENV_FILE=/etc/corecycler/autotune.env
+COUNTER=/var/lib/corecycler/resume-count
+UNITS=(corecycler-watchdog.service corecycler-autoresume.service)
+
+usage() {
+    cat <<'USAGE'
+uso: sudo corecycler-autotune <comando>
+
+  start [--config F]   arma o modo automático e inicia uma sessão NOVA de tuning
+                       no terminal (sem interface); crashes são retomados sozinhos
+  arm                  arma o modo automático para uma sessão já iniciada na GUI
+  disarm               desliga o modo automático e o watchdog
+  status               mostra se está armado, o watchdog e as sessões
+  log                  acompanha o log do serviço (Ctrl+C para sair)
+
+Variáveis opcionais ao armar: CORECYCLER_SETTLE (segundos antes de retomar,
+padrão 60), CORECYCLER_MAX_RESUMES (limite de boots, padrão 60).
+Emergência: adicione 'corecycler.noresume' na linha do kernel no boot.
+USAGE
+}
+
+need_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "rode com sudo: sudo corecycler-autotune $*" >&2
+        exit 1
+    fi
+}
+
+target_user() {
+    # Dono do banco de dados (~/.local/share/corecycler): quem chamou o sudo.
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+        echo "$SUDO_USER"
+    elif [ -f "$ENV_FILE" ]; then
+        sed -n 's/^SUDO_USER=//p' "$ENV_FILE"
+    fi
+}
+
+cmd_arm() {
+    local user uid gid
+    user=$(target_user)
+    if [ -z "$user" ]; then
+        echo "não sei qual usuário é o dono das sessões; rode via sudo a partir do seu usuário" >&2
+        exit 1
+    fi
+    uid=$(id -u "$user") gid=$(id -g "$user")
+    mkdir -p /etc/corecycler /var/lib/corecycler
+    cat > "$ENV_FILE" <<ENV
+# Gerado por corecycler-autotune arm. Faz o serviço root usar o banco e as
+# configurações de $user, igual a 'sudo corecycler'.
+SUDO_USER=$user
+SUDO_UID=$uid
+SUDO_GID=$gid
+CORECYCLER_SETTLE=${CORECYCLER_SETTLE:-60}
+CORECYCLER_MAX_RESUMES=${CORECYCLER_MAX_RESUMES:-60}
+ENV
+    echo 0 > "$COUNTER"
+    systemctl daemon-reload
+    systemctl enable "${UNITS[@]}" >/dev/null 2>&1
+    if systemctl start corecycler-watchdog.service && systemctl is-active -q corecycler-watchdog.service; then
+        echo "watchdog de hardware ativo: travamentos vão reiniciar o PC sozinhos"
+    else
+        echo "AVISO: o watchdog não subiu; travamentos totais vão exigir reset manual" >&2
+        echo "       veja: journalctl -u corecycler-watchdog -b" >&2
+    fi
+    echo "modo automático ARMADO para $user: após cada reboot a sessão em andamento é retomada"
+}
+
+cmd_disarm() {
+    local quiet="${1:-}"
+    systemctl disable "${UNITS[@]}" >/dev/null 2>&1
+    systemctl stop corecycler-watchdog.service 2>/dev/null
+    if [ -z "${CORECYCLER_IN_SERVICE:-}" ]; then
+        # 'stop' manda SIGTERM: o CLI reverte os offsets para o baseline e salva o estado.
+        systemctl stop corecycler-autoresume.service 2>/dev/null
+    fi
+    rm -f "$ENV_FILE"
+    [ "$quiet" = --quiet ] || echo "modo automático DESARMADO"
+}
+
+cmd_status() {
+    local s
+    for u in "${UNITS[@]}"; do
+        s="$(systemctl is-enabled "$u" 2>/dev/null)/$(systemctl is-active "$u" 2>/dev/null)"
+        printf '%-32s %s\n' "$u" "$s"
+    done
+    [ -f "$ENV_FILE" ] && echo "armado para: $(sed -n 's/^SUDO_USER=//p' "$ENV_FILE")" || echo "não armado"
+    echo "retomadas desde que armou: $(cat "$COUNTER" 2>/dev/null || echo 0)"
+    for d in /sys/class/watchdog/watchdog*; do
+        [ -e "$d" ] || continue
+        echo "watchdog $(basename "$d"): $(cat "$d/identity" 2>/dev/null) timeout=$(cat "$d/timeout" 2>/dev/null)s state=$(cat "$d/state" 2>/dev/null)"
+    done
+    echo
+    /usr/local/bin/corecycler status
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case "$cmd" in
+    arm)    need_root arm; cmd_arm ;;
+    disarm) need_root disarm; cmd_disarm "${1:-}" ;;
+    start)
+        need_root start
+        cmd_arm
+        echo "iniciando sessão nova (Ctrl+C pausa e reverte os offsets)..."
+        exec /usr/local/bin/corecycler tune "$@"
+        ;;
+    status) cmd_status ;;
+    log)    exec journalctl -u corecycler-autoresume -u corecycler-watchdog -f -o cat ;;
+    -h|--help|help|"") usage ;;
+    *) echo "comando desconhecido: $cmd" >&2; usage >&2; exit 1 ;;
+esac
