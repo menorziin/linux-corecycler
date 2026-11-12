@@ -30,6 +30,33 @@ paru -S ryzen_smu-dkms-git mprime-bin   # AUR, com o seu usuário
 
 Depois disso, confira com `corecycler doctor`.
 
+## Antes de começar: deixe a BIOS na configuração final
+
+Os valores do Curve Optimizer só valem para o PBO com que foram testados. Um boost mais alto pede mais tensão, então um offset estável sem boost override pode travar com ele. Por isso, **configure o PBO exatamente como vai usar no dia a dia e só depois rode o tuning**:
+
+| Opção na BIOS | Como deixar |
+|---|---|
+| Precision Boost Overdrive | `Advanced` (ou `Enabled`) |
+| PBO Limits (PPT / TDC / EDC) | Os valores que você vai usar (`Manual`), ou `Auto`/`Motherboard` se for usar assim |
+| Boost Clock Override | O valor final (ex.: +200 MHz), ou desligado se não for usar |
+| PBO Scalar | O valor final (`1X` / `Auto` é o mais seguro) |
+| **Curve Optimizer** | **`All Cores`, sinal `Negative`, valor `0`**. Evite `Disabled`: em algumas placas ele desliga o recurso, e os valores que o tuner grava pelo SMU podem não ter efeito. Nunca deixe offsets antigos: o tuner precisa partir do zero. |
+
+Os nomes mudam um pouco entre fabricantes (MSI, ASUS, Gigabyte, ASRock), mas as opções são as mesmas. Normalmente ficam em *Overclocking / AI Tweaker / Tweaker → AMD Overclocking → Precision Boost Overdrive*.
+
+**Confira se o boost override pegou** antes de começar. Com um núcleo em carga, o clock máximo deve passar do boost de fábrica da sua CPU mais o override:
+
+```bash
+stress-ng --cpu 1 --taskset 0 -t 30s &
+watch -n1 "grep MHz /proc/cpuinfo | sort -t: -k2 -nr | head -3"
+```
+
+**Mudou o PBO depois?** Refaça o tuning. Isso vale para mais boost override, outros limites, scalar ou troca de BIOS. Os valores antigos podem não ser mais estáveis.
+
+**"Hardware Error" no primeiro boot depois de mexer na BIOS:** as placas AM4/AM5 às vezes registram um machine check no reinício que aplica o PBO novo. Se ele aparece só nesse boot (`journalctl -k -b | grep "Hardware Error"`), não é problema. Se aparecer em boots normais, com o Curve Optimizer ainda em 0, o PBO em si está agressivo demais para a sua CPU. Reduza o boost override antes de fazer undervolt.
+
+Durante o tuning, deixe o PC parado e **desligue a suspensão automática** (no KDE: Configurações do Sistema → Energia). Se o PC suspender, os testes param.
+
 ## Uso
 
 **Recomendado:** configure na GUI e entregue para o serviço.
@@ -62,7 +89,9 @@ Para parar: `sudo corecycler-autotune disarm`. O tuner recebe SIGTERM, reverte o
 
 ## Quando terminar
 
-Os valores aplicados pelo SMU **somem no reboot**. Pegue os offsets finais na aba History (ou em `corecycler status`) e coloque-os na BIOS: PBO → Curve Optimizer → Per Core. Depois use o PC normalmente por alguns dias. Instabilidade em idle ou em carga leve só aparece com o tempo.
+Os valores aplicados pelo SMU **somem no reboot**. Pegue os offsets finais na aba History (ou em `corecycler status`) e coloque-os na BIOS: PBO → Curve Optimizer → `Per Core`, com sinal `Negative` e o valor de cada núcleo. Não mude mais nada do PBO. Depois use o PC normalmente por alguns dias, porque instabilidade em idle ou em carga leve só aparece com o tempo. Se der travamento ou "Hardware Error" no `journalctl`, deixe o núcleo correspondente 2 ou 3 pontos menos negativo.
+
+Configs do CoreCycler de Windows (`.ini` com y-cruncher, por exemplo) não funcionam aqui e não são necessárias: o tuner já usa o mprime em vários tipos de carga, mais uma etapa de carga variável e a validação final com vários núcleos. Não precisa de nenhum teste extra antes do uso real.
 
 ## Segurança
 
