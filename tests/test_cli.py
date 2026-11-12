@@ -234,6 +234,42 @@ class TestCliMainDispatch:
         assert "core 1: best    -" in out
         db.close()
 
+    def test_pbo_dispatches(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(cli, "cmd_pbo", lambda: seen.append("p") or 0)
+        assert cli.cli_main(["pbo"]) == 0
+        assert seen == ["p"]
+
+    def test_pbo_prints_live_state(self, capsys):
+        from types import SimpleNamespace
+
+        from corecycler.smu.commands import CPUGeneration
+        from corecycler.smu.driver import SystemPBOState
+
+        topo = SimpleNamespace(cores={0: None, 1: None}, model_name="AMD Ryzen 7 5700X 8-Core Processor")
+        state = SystemPBOState(
+            co_offsets={0: -30, 1: -16},
+            pbo_scalar=1.0,
+            max_freq_mhz=4850.0,
+            generation=CPUGeneration.ZEN3_VERMEER,
+            smu_available=True,
+        )
+        smu = SimpleNamespace(detect_system_state=lambda n: state)
+        code = cli.cmd_pbo(topology=topo, smu=smu, power_limits=(110.0, 70.0, 110.0))
+        out = capsys.readouterr().out
+        assert code == cli.EXIT_COMPLETED
+        assert "core 0: -30" in out and "core 1: -16" in out
+        assert "PPT: 110 W   TDC: 70 A   EDC: 110 A" in out
+        assert "4850 MHz" in out
+
+    def test_pbo_refuses_without_smu(self, monkeypatch, capsys):
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(cli, "_build_smu", lambda _t: None)
+        topo = SimpleNamespace(cores={0: None}, model_name="x")
+        assert cli.cmd_pbo(topology=topo) == cli.EXIT_REFUSED
+        assert "sudo" in capsys.readouterr().err
+
     def test_tune_dispatches_with_no_config(self, monkeypatch):
         seen = {}
         monkeypatch.setattr(cli, "cmd_run", lambda **k: seen.update(k) or 0)

@@ -28,6 +28,8 @@ corecycler headless commands:
 
   corecycler doctor               report every external tool and where it resolved
   corecycler status               list tuner sessions and their state
+  corecycler pbo                  show the live PBO state read from the CPU: per-core
+                                  Curve Optimizer offsets, PPT/TDC/EDC, max boost (root)
   corecycler tune [--config F]    start a NEW tuning session and run to the end
   corecycler resume [SESSION_ID]  resume a mid-run/paused session (newest if omitted)
   corecycler resume --active-only resume ONLY a mid-run (running/validating)
@@ -52,6 +54,8 @@ def cli_main(argv: list[str]) -> int:
         return cmd_doctor()
     if command == "status":
         return cmd_status()
+    if command == "pbo":
+        return cmd_pbo()
     if command == "tune":
         config_path = _flag_value(argv[1:], "--config")
         if config_path is _INVALID:
@@ -161,6 +165,55 @@ def cmd_status(db=None) -> int:
     finally:
         if own_db:
             db.close()
+
+
+def cmd_pbo(*, topology=None, smu=None, power_limits=None) -> int:
+    """Print the PBO state the CPU is running with right now (BIOS + SMU overrides)."""
+    if topology is None:
+        from corecycler.engine.topology import detect_topology
+
+        topology = detect_topology()
+    if topology is None or not topology.cores:
+        print("corecycler pbo: CPU topology detection failed", file=sys.stderr)
+        return EXIT_REFUSED
+    num_cores = len(topology.cores)
+    if smu is None:
+        smu = _build_smu(topology)
+    if smu is None:
+        print(
+            "corecycler pbo: cannot talk to the SMU -- run with sudo and make sure "
+            "the ryzen_smu module is loaded (sudo modprobe ryzen_smu)",
+            file=sys.stderr,
+        )
+        return EXIT_REFUSED
+
+    state = smu.detect_system_state(num_cores)
+    if power_limits is None:
+        try:
+            from corecycler.smu.pmtable import read_power_limits
+
+            power_limits = read_power_limits(num_cores)
+        except Exception:
+            power_limits = (None, None, None)
+    ppt, tdc, edc = power_limits
+
+    def _fmt(value, unit: str, fmt: str = "{:.0f}") -> str:
+        return "n/a" if value is None else f"{fmt.format(value)} {unit}"
+
+    gen = getattr(state.generation, "name", None) or "unknown"
+    print(f"CPU: {topology.model_name or '?'}  ({gen})")
+    print("Curve Optimizer (per core):")
+    for core_id in sorted(state.co_offsets):
+        value = state.co_offsets[core_id]
+        shown = "n/a" if value is None else f"{value:+d}"
+        print(f"  core {core_id}: {shown}")
+    print(f"PPT: {_fmt(ppt, 'W')}   TDC: {_fmt(tdc, 'A')}   EDC: {_fmt(edc, 'A')}")
+    if state.pbo_scalar is not None:
+        print(f"PBO scalar: {state.pbo_scalar:g}x")
+    if state.boost_limit_mhz is not None:
+        print(f"Boost limit: {state.boost_limit_mhz} MHz")
+    print(f"Max boost clock (cpufreq): {_fmt(state.max_freq_mhz, 'MHz')}")
+    return EXIT_COMPLETED
 
 
 def _build_smu(topology):

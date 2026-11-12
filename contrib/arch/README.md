@@ -89,7 +89,7 @@ Para parar: `sudo corecycler-autotune disarm`. O tuner recebe SIGTERM, reverte o
 
 ## Quando terminar
 
-Os valores aplicados pelo SMU **somem no reboot**. Pegue os offsets finais na aba History (ou em `corecycler status`) e coloque-os na BIOS: PBO → Curve Optimizer → `Per Core`, com sinal `Negative` e o valor de cada núcleo. Não mude mais nada do PBO. Depois use o PC normalmente por alguns dias, porque instabilidade em idle ou em carga leve só aparece com o tempo. Se der travamento ou "Hardware Error" no `journalctl`, deixe o núcleo correspondente 2 ou 3 pontos menos negativo.
+Os valores aplicados pelo SMU **somem no reboot**. Pegue os offsets finais na aba History (ou em `corecycler status`) e coloque-os na BIOS: PBO → Curve Optimizer → `Per Core`, com sinal `Negative` e o valor de cada núcleo. Não mude mais nada do PBO. De volta ao Linux, confira se a BIOS aplicou tudo com `sudo corecycler pbo`: ele lê da própria CPU o offset de cada núcleo, PPT/TDC/EDC e o boost. Depois use o PC normalmente por alguns dias, porque instabilidade em idle ou em carga leve só aparece com o tempo. Se der travamento ou "Hardware Error" no `journalctl`, deixe o núcleo correspondente 2 ou 3 pontos menos negativo.
 
 Configs do CoreCycler de Windows (`.ini` com y-cruncher, por exemplo) não funcionam aqui e não são necessárias: o tuner já usa o mprime em vários tipos de carga, mais uma etapa de carga variável e a validação final com vários núcleos. Não precisa de nenhum teste extra antes do uso real.
 
